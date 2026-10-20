@@ -1,0 +1,17 @@
+azimuth-arm64
+https://github.com/Ken5998/azimuth-arm64
+
+Copyright (c) 2026 Kenan Kasumović
+
+Licensed under the MIT License (see LICENSE), the license of Mesa's Turnip
+and ir3 code that the patches change.
+
+Mesa: https://gitlab.freedesktop.org/mesa/mesa
+The workflows download Mesa at the commit in upstream.json and build Turnip
+from that source with ArmadaOS's base patches
+(https://github.com/armada-os/armada, packages/mesa/patches) and the patches
+in patches/ applied. Released packages contain that build.
+
+Azimuth is made by Almost There Games (https://almost-there-games.itch.io/azimuth).
+Forza Horizon 2 is a trademark of Microsoft. Neither is affiliated with this
+repository, and no files from either are included here.

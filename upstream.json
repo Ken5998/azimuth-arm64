@@ -1,0 +1,15 @@
+{
+  "mesa": {
+    "commit": "c126acd85a645728bcecaa164d7d7c928438e842",
+    "url": "https://gitlab.freedesktop.org/mesa/mesa/-/archive/c126acd85a645728bcecaa164d7d7c928438e842/mesa-c126acd85a645728bcecaa164d7d7c928438e842.tar.gz",
+    "sha256": "f890f9a20db8afb07b3ac3e17ce594a857dce73aa0bda62e80cdf1171cc109e6"
+  },
+  "armada": {
+    "repository": "https://github.com/armada-os/armada",
+    "commit": "ecc0d3e1383535aa868a34fc79fd56a27006f223",
+    "patches": [
+      "packages/mesa/patches/0001-disable-turnip-sparse-sync.patch",
+      "packages/mesa/patches/0003-ir3-disable-bindless-ubo-const-lowering.patch"
+    ]
+  }
+}

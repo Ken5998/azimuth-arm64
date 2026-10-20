@@ -1,0 +1,37 @@
+name: CI
+
+# Builds the patched Turnip on an aarch64 runner in Fedora 44, the base of
+# ArmadaOS, and keeps the package as an artifact.
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  turnip:
+    runs-on: ubuntu-24.04-arm
+    container: registry.fedoraproject.org/fedora:44
+    timeout-minutes: 60
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf -y install git gcc gcc-c++ meson ninja-build pkgconf-pkg-config patch curl tar gzip \
+            python3 python3-mako python3-pyyaml python3-packaging bison flex glslang \
+            libdrm-devel expat-devel zlib-devel libzstd-devel \
+            wayland-devel wayland-protocols-devel libX11-devel libxcb-devel \
+            libxshmfence-devel libXrandr-devel
+      - uses: actions/checkout@v5
+      - name: Check the scripts
+        run: bash -n scripts/*.sh
+      - name: Prepare the source
+        run: scripts/prepare.sh work
+      - name: Build
+        run: scripts/build.sh work out
+      - name: Check the driver
+        run: |
+          tar -tzf out/azimuth-turnip-*.tar.gz
+          strings work/pkg/azimuth/libvulkan_freedreno.so | grep -q VK_EXT_external_memory_host
+      - uses: actions/upload-artifact@v4
+        with:
+          name: azimuth-turnip
+          path: out/*.tar.gz

@@ -1,0 +1,226 @@
+From c7b01ff02377ea80de7c243d83295b7d0972ef5f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Kenan=20Kasumovi=C4=87?=
+ <46025606+Ken5998@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 16:08:08 +0000
+Subject: [PATCH 1/2] tu: emulate VK_EXT_external_memory_host on msm
+
+The msm kernel driver cannot wrap user pages in a GEM object, so Turnip
+does not expose VK_EXT_external_memory_host. vkd3d-proton needs it for
+ID3D12Device3::OpenExistingHeapFromAddress, and Azimuth stops at startup
+without it ("the D3D12 driver cannot open heaps over existing memory").
+
+Emulate the import: allocate a cached-coherent BO of the same size, copy
+the host range into it and map the BO over the application's pointer
+with MAP_FIXED, so the application keeps using its address and shares
+the pages with the GPU. On free, the range gets anonymous memory back
+with the BO's last contents. Writes made to the range by other threads
+while it is being swapped are lost.
+---
+ src/freedreno/vulkan/tu_device.cc | 124 ++++++++++++++++++++++++++++++
+ src/freedreno/vulkan/tu_device.h  |   3 +
+ 2 files changed, 127 insertions(+)
+
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index efbf83b..548f588 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -9,6 +9,8 @@
+ 
+ #include "tu_device.h"
+ 
++#include <sys/mman.h>
++
+ #include "drm-uapi/drm_fourcc.h"
+ #include "git_sha1.h"
+ #include "perfcntrs/freedreno_perfcntr.h"
+@@ -341,6 +343,9 @@ get_device_extensions(const struct tu_physical_device *device,
+       .EXT_extended_dynamic_state2 = true,
+       .EXT_extended_dynamic_state3 = true,
+       .EXT_external_memory_dma_buf = true,
++      /* Emulated: see tu_import_host_pointer(). */
++      .EXT_external_memory_host = !strcmp(device->instance->knl->name, "msm") &&
++                                  device->has_cached_coherent_memory,
+       .EXT_filter_cubic = device->info->props.has_tex_filter_cubic,
+       .EXT_fragment_density_map = true,
+       .EXT_fragment_density_map_offset = true,
+@@ -1445,6 +1450,9 @@ tu_get_properties(struct tu_physical_device *pdevice,
+    os_get_page_size(&os_page_size);
+    props->minPlacedMemoryMapAlignment = os_page_size;
+ 
++   /* VK_EXT_external_memory_host */
++   props->minImportedHostPointerAlignment = os_page_size;
++
+    /* VK_EXT_multi_draw */
+    props->maxMultiDrawCount = 2048;
+ 
+@@ -3634,12 +3642,18 @@ tu_memory_get_ref(struct tu_device_memory *mem)
+    return mem;
+ }
+ 
++static void
++tu_release_host_pointer(struct tu_device *device,
++                        struct tu_device_memory *mem);
++
+ static void
+ _tu_destroy_memory(struct tu_device *device,
+                   struct tu_device_memory *mem)
+ {
+    if (mem->bo) {
+       p_atomic_add(&device->physical_device->heap.used, -mem->bo->size);
++      if (mem->host_ptr)
++         tu_release_host_pointer(device, mem);
+       tu_bo_finish(device, mem->bo);
+    }
+ 
+@@ -3695,6 +3709,84 @@ tu_memory_emit_report(struct tu_device *device,
+       (uintptr_t)(mem), 0 /* heap_index */);
+ }
+ 
++/* msm can't wrap user pages in a BO, so VK_EXT_external_memory_host is
++ * emulated: the contents of the host range are copied into a new
++ * cached-coherent BO, which is then mapped over the same address. The
++ * application keeps using its pointer and now shares the pages with the GPU.
++ * When the memory is freed, the range gets anonymous memory back with the
++ * BO's last contents. Writes to the range by other threads while it is being
++ * swapped are lost.
++ */
++static VkResult
++tu_import_host_pointer(struct tu_device *device,
++                       struct tu_device_memory *mem,
++                       const VkImportMemoryHostPointerInfoEXT *host_info,
++                       VkDeviceSize size)
++{
++   void *host_ptr = host_info->pHostPointer;
++
++   if (((uintptr_t) host_ptr | size) & (os_page_size - 1))
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++
++   const VkMemoryPropertyFlags mem_property =
++      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
++      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
++      VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
++
++   VkResult result = tu_bo_init_new_explicit_iova(
++      device, &mem->vk.base, &mem->bo, size, 0, 0, mem_property,
++      TU_BO_ALLOC_NO_FLAGS, NULL, "vkAlloc(host)");
++   if (result != VK_SUCCESS)
++      return result;
++
++   if (mem->bo->size != size) {
++      tu_bo_finish(device, mem->bo);
++      mem->bo = NULL;
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++   }
++
++   result = tu_bo_map(device, mem->bo, NULL);
++   if (result == VK_SUCCESS) {
++      memcpy(mem->bo->map, host_ptr, size);
++      tu_bo_unmap(device, mem->bo, false);
++      result = tu_bo_map(device, mem->bo, host_ptr);
++   }
++   if (result != VK_SUCCESS) {
++      tu_bo_finish(device, mem->bo);
++      mem->bo = NULL;
++      return result;
++   }
++
++   /* The application owns the range, vkUnmapMemory must leave it alone. */
++   mem->bo->never_unmap = true;
++   mem->host_ptr = host_ptr;
++   return VK_SUCCESS;
++}
++
++static void
++tu_release_host_pointer(struct tu_device *device,
++                        struct tu_device_memory *mem)
++{
++   size_t size = mem->bo->size;
++   void *copy = mmap(NULL, size, PROT_READ | PROT_WRITE,
++                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++   if (copy == MAP_FAILED) {
++      mesa_loge("tu: no memory to restore imported host range %p", mem->host_ptr);
++   } else {
++      memcpy(copy, mem->host_ptr, size);
++      if (mremap(copy, size, size, MREMAP_MAYMOVE | MREMAP_FIXED,
++                 mem->host_ptr) == MAP_FAILED) {
++         mesa_loge("tu: failed to restore imported host range %p", mem->host_ptr);
++         munmap(copy, size);
++      }
++   }
++
++   /* The BO mapping was replaced, don't let tu_bo_finish() unmap the range. */
++   mem->bo->map = NULL;
++   mem->host_ptr = NULL;
++}
++
+ VKAPI_ATTR VkResult VKAPI_CALL
+ tu_AllocateMemory(VkDevice _device,
+                   const VkMemoryAllocateInfo *pAllocateInfo,
+@@ -3739,6 +3831,9 @@ tu_AllocateMemory(VkDevice _device,
+ 
+    const VkImportMemoryFdInfoKHR *fd_info =
+       vk_find_struct_const(pAllocateInfo->pNext, IMPORT_MEMORY_FD_INFO_KHR);
++   const VkImportMemoryHostPointerInfoEXT *host_info =
++      vk_find_struct_const(pAllocateInfo->pNext,
++                           IMPORT_MEMORY_HOST_POINTER_INFO_EXT);
+ 
+    const VkBufferDeviceAddressAlignmentAllocateInfoVALVE *align_info =
+       vk_find_struct_const(pAllocateInfo->pNext,
+@@ -3763,6 +3858,11 @@ tu_AllocateMemory(VkDevice _device,
+          /* take ownership and close the fd */
+          close(fd_info->fd);
+       }
++   } else if (host_info && host_info->handleType) {
++      assert(host_info->handleType ==
++             VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT);
++      result = tu_import_host_pointer(device, mem, host_info,
++                                      pAllocateInfo->allocationSize);
+    } else if (mem->vk.ahardware_buffer) {
+ #if DETECT_OS_ANDROID
+       const native_handle_t *handle = AHardwareBuffer_getNativeHandle(mem->vk.ahardware_buffer);
+@@ -4492,6 +4592,30 @@ tu_GetMemoryFdPropertiesKHR(VkDevice _device,
+    return VK_SUCCESS;
+ }
+ 
++VKAPI_ATTR VkResult VKAPI_CALL
++tu_GetMemoryHostPointerPropertiesEXT(
++   VkDevice _device,
++   VkExternalMemoryHandleTypeFlagBits handleType,
++   const void *pHostPointer,
++   VkMemoryHostPointerPropertiesEXT *pMemoryHostPointerProperties)
++{
++   VK_FROM_HANDLE(tu_device, device, _device);
++   const struct tu_physical_device *pdev = device->physical_device;
++
++   if (handleType != VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT)
++      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
++
++   /* Imports always get a cached-coherent BO, offer only matching types. */
++   uint32_t bits = 0;
++   for (uint32_t i = 0; i < pdev->memory.non_lazy_type_count; i++) {
++      if (pdev->memory.types[i] & VK_MEMORY_PROPERTY_HOST_CACHED_BIT &&
++          pdev->memory.types[i] & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
++         bits |= 1u << i;
++   }
++   pMemoryHostPointerProperties->memoryTypeBits = bits;
++   return VK_SUCCESS;
++}
++
+ VKAPI_ATTR void VKAPI_CALL
+ tu_GetPhysicalDeviceMultisamplePropertiesEXT(
+    VkPhysicalDevice                            physicalDevice,
+diff --git a/src/freedreno/vulkan/tu_device.h b/src/freedreno/vulkan/tu_device.h
+index 5ef943a..cad62d9 100644
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -540,6 +540,9 @@ struct tu_device_memory
+ 
+    struct tu_bo *bo;
+ 
++   /* VK_EXT_external_memory_host: the application range the BO is mapped over */
++   void *host_ptr;
++
+    /* for dedicated allocations */
+    struct tu_image *image;
+ };
