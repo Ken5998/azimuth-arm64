@@ -1,0 +1,89 @@
+name: IR3 square A/B
+
+# Build both sides of the experiment from one revision and one toolchain.
+# This workflow produces artifacts; it does not publish a release.
+on:
+  push:
+    branches: [experiment/ir3-guarded-squares]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  turnip:
+    runs-on: ubuntu-24.04-arm
+    container: registry.fedoraproject.org/fedora:44
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, squares]
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf -y install git gcc gcc-c++ meson ninja-build pkgconf-pkg-config patch curl tar gzip \
+            python3 python3-mako python3-pyyaml python3-packaging bison flex glslang \
+            libdrm-devel expat-devel zlib-devel libzstd-devel \
+            wayland-devel wayland-protocols-devel libX11-devel libxcb-devel \
+            libxshmfence-devel libXrandr-devel
+      - uses: actions/checkout@v5
+      - name: Select baseline
+        if: matrix.variant == 'baseline'
+        run: |
+          mkdir -p parked-patches
+          mv patches/0003-nir-remove-redundant-zero-guards-from-squares.patch parked-patches/
+      - name: Check scripts
+        run: |
+          for script in scripts/*.sh; do
+            bash -n "$script"
+          done
+      - name: Prepare source
+        run: scripts/prepare.sh work
+      - name: Build driver
+        run: scripts/build.sh work out
+      - name: Check strict square optimization
+        if: matrix.variant == 'squares'
+        run: |
+          # The release driver is already copied into work/pkg. Enable
+          # assertions for the compiler tests without changing that artifact.
+          meson configure work/mesa/build -Dbuild-tests=true -Db_ndebug=false
+          ninja -C work/mesa/build src/compiler/nir/nir_tests
+          work/mesa/build/src/compiler/nir/nir_tests \
+            --gtest_filter='nir_opt_algebraic_zero_square_test.*:nir_opt_algebraic_pattern_test.bcsel_feq_fmul*'
+      - name: Package comparison artifact
+        env:
+          IR3_VARIANT: ${{ matrix.variant }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          variant = os.environ['IR3_VARIANT']
+          version = Path('VERSION').read_text().strip()
+          driver = Path('work/pkg/azimuth/libvulkan_freedreno.so')
+          metadata = Path('work/pkg/azimuth/meta.json')
+          label = json.loads(metadata.read_text())
+          label['name'] = f'Azimuth IR3 {variant} ({version})'
+          metadata.write_text(json.dumps(label, indent=2) + '\n')
+          comparison = {
+              'variant': variant,
+              'repository_commit': os.environ['GITHUB_SHA'],
+              'upstream': json.loads(Path('upstream.json').read_text()),
+              'driver_sha256': hashlib.sha256(driver.read_bytes()).hexdigest(),
+              'patches': [p.name for p in sorted(Path('patches').glob('*.patch'))],
+          }
+          Path('work/pkg/azimuth/comparison.json').write_text(
+              json.dumps(comparison, indent=2) + '\n')
+          PY
+          version="$(cat VERSION)"
+          tar -czf "out/azimuth-turnip-$version-ir3-$IR3_VARIANT.tar.gz" \
+            -C work/pkg azimuth azimuth-hosttest
+          sha256sum "out/azimuth-turnip-$version-ir3-$IR3_VARIANT.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: azimuth-turnip-ir3-${{ matrix.variant }}
+          path: out/*-ir3-${{ matrix.variant }}.tar.gz
+          if-no-files-found: error

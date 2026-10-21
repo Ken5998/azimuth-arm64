@@ -1,0 +1,242 @@
+Subject: [PATCH] nir: remove redundant positive-zero guards from FP32 squares
+
+Some translated shaders explicitly select +0.0 when the operand of a
+square compares equal to zero.  The square already produces +0.0 for
+both signs of zero; every other input, including NaN and infinity,
+already selects the same multiplication.
+
+The existing fmulz(a, a) rule does not cover this direct comparison form.
+Recognize it in the regular algebraic pass, without relaxing floating
+point controls or changing guarded products with distinct operands.
+Restrict the new rule to FP32, the observed case.
+
+Add structural tests for strict scalar/vector inputs, swizzles and
+non-matching cases, plus numeric edge cases under NIR's FP32 rounding
+and denormal modes.  No game shader content is included.
+
+Base: Mesa c126acd85a645728bcecaa164d7d7c928438e842
+---
+diff --git a/src/compiler/nir/nir_opt_algebraic.py b/src/compiler/nir/nir_opt_algebraic.py
+--- a/src/compiler/nir/nir_opt_algebraic.py
++++ b/src/compiler/nir/nir_opt_algebraic.py
+@@ -281,6 +281,10 @@
+    (('fmulz(nsz)', a, 'b(is_finite_not_zero)'), ('fmul', a, b)),
+    (('fmulz(nsz)', 'a(is_finite)', 'b(is_finite)'), ('fmul', a, b)),
+    (('fmulz', a, a), ('fmul', a, a)),
++   # A square already gives +0.0 for either sign of zero.  This is also safe
++   # with signed-zero/Inf/NaN preservation: all nonzero inputs use the same
++   # multiplication, including infinities and NaNs.
++   (('bcsel', ('feq', a, 0.0), 0.0, ('fmul@32', a, a)), ('fmul', a, a)),
+    (('ffmaz(nsz)', a, 'b(is_finite_not_zero)', c), ('ffma', a, b, c)),
+    (('ffmaz', 'a(is_finite)', 'b(is_finite)', c), ('ffma', a, b, c)),
+    (('ffmaz', a, a, b), ('ffma', a, a, b)),
+diff --git a/src/compiler/nir/tests/algebraic_tests.cpp b/src/compiler/nir/tests/algebraic_tests.cpp
+--- a/src/compiler/nir/tests/algebraic_tests.cpp
++++ b/src/compiler/nir/tests/algebraic_tests.cpp
+@@ -23,6 +23,7 @@
+  */
+ 
+ #include "nir_test.h"
++#include "nir_constant_expressions.h"
+ 
+ namespace {
+ 
+@@ -292,3 +293,198 @@
+ }
+ 
+ }
++
++namespace {
++
++class nir_opt_algebraic_zero_square_test : public nir_test {
++protected:
++   nir_opt_algebraic_zero_square_test()
++      : nir_test("nir_opt_algebraic_zero_square_test")
++   {
++      /* Match the relevant ir3 option and forbid all unsafe FP rewrites. */
++      options.has_fmulz = true;
++      b->fp_math_ctrl = nir_fp_no_fast_math;
++   }
++
++   nir_def *input(int index = 0, unsigned components = 1,
++                  unsigned bits = 32)
++   {
++      return nir_unit_test_uniform_input(b, components, bits, index);
++   }
++
++   nir_def *guard(nir_def *compared, nir_def *lhs, nir_def *rhs,
++                  double true_value = 0.0, bool commute_compare = false)
++   {
++      nir_def *zero = nir_imm_floatN_t(b, 0.0, compared->bit_size);
++      nir_def *cond = commute_compare ? nir_feq(b, zero, compared)
++                                     : nir_feq(b, compared, zero);
++      return nir_bcsel(b, cond,
++                       nir_imm_floatN_t(b, true_value, lhs->bit_size),
++                       nir_fmul(b, lhs, rhs));
++   }
++
++   nir_alu_instr *optimize(nir_def *value)
++   {
++      /* This intrinsic preserves a use without depending on an output type. */
++      nir_intrinsic_instr *use = nir_unit_test_assert_eq(b, value, value);
++      nir_validate_shader(b->shader, "before zero-square algebraic test");
++      nir_opt_algebraic(b->shader);
++      nir_opt_dce(b->shader);
++      nir_validate_shader(b->shader, "after zero-square algebraic test");
++      return nir_src_as_alu(use->src[0]);
++   }
++
++   void require_strict_square(nir_alu_instr *alu, unsigned components = 1)
++   {
++      ASSERT_NE(alu, nullptr);
++      ASSERT_EQ(alu->op, nir_op_fmul);
++      EXPECT_EQ(alu->def.bit_size, 32);
++      EXPECT_EQ(alu->def.num_components, components);
++      EXPECT_EQ(alu->src[0].src.ssa, alu->src[1].src.ssa);
++      for (unsigned c = 0; c < components; c++)
++         EXPECT_EQ(alu->src[0].swizzle[c], alu->src[1].swizzle[c]);
++      EXPECT_EQ(alu->fp_math_ctrl,
++                nir_op_valid_fp_math_ctrl(nir_op_fmul, nir_fp_no_fast_math));
++   }
++
++   void require_select(nir_alu_instr *alu)
++   {
++      ASSERT_NE(alu, nullptr);
++      EXPECT_EQ(alu->op, nir_op_bcsel);
++   }
++};
++
++TEST_F(nir_opt_algebraic_zero_square_test, strict_fp32_scalar)
++{
++   nir_def *a = input();
++   require_strict_square(optimize(guard(a, a, a)));
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, strict_fp32_commuted_compare)
++{
++   nir_def *a = input();
++   require_strict_square(optimize(guard(a, a, a, 0.0, true)));
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, strict_fp32_vec4)
++{
++   nir_def *a = input(0, 4);
++   require_strict_square(optimize(guard(a, a, a)), 4);
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, strict_fp32_vec4_matching_swizzles)
++{
++   nir_def *v = input(0, 4);
++   const unsigned swizzle[] = {3, 1, 0, 2};
++   nir_def *a = nir_swizzle(b, v, swizzle, 4);
++   require_strict_square(optimize(guard(a, a, a)), 4);
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, retain_negative_zero_true_arm)
++{
++   nir_def *a = input();
++   require_select(optimize(guard(a, a, a, -0.0)));
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, retain_mixed_product)
++{
++   nir_def *a = input(0);
++   nir_def *other = input(1);
++   require_select(optimize(guard(a, a, other)));
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, retain_different_guard_source)
++{
++   nir_def *a = input(0);
++   nir_def *other = input(1);
++   require_select(optimize(guard(other, a, a)));
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, retain_opposite_sign_product)
++{
++   nir_def *a = input();
++   require_select(optimize(guard(a, a, nir_fneg(b, a))));
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, retain_mismatched_swizzles)
++{
++   nir_def *a = input(0, 4);
++   nir_def *result = guard(a, a, a);
++   nir_alu_instr *product = nir_src_as_alu(nir_def_as_alu(result)->src[2].src);
++   const unsigned swizzle[] = {1, 0, 3, 2};
++   for (unsigned c = 0; c < 4; c++)
++      product->src[1].swizzle[c] = swizzle[c];
++   require_select(optimize(result));
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, retain_fp16)
++{
++   nir_def *a = input(0, 1, 16);
++   require_select(optimize(guard(a, a, a)));
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, retain_fp64)
++{
++   nir_def *a = input(0, 1, 64);
++   require_select(optimize(guard(a, a, a)));
++}
++
++TEST_F(nir_opt_algebraic_zero_square_test, fp32_edge_value_equivalence)
++{
++   /* Raw bits include both zero signs, subnormal boundaries, underflow and
++    * overflow neighborhoods, infinities and several NaN encodings.  This
++    * supplements the generated pattern test, whose FP32 inputs omit -0 and
++    * nonzero subnormals.  Evaluation uses Mesa's NIR semantics, not native
++    * compiler fast-math expressions.
++    */
++   const uint32_t inputs[] = {
++      0x00000000u, 0x80000000u,
++      0x00000001u, 0x80000001u, 0x007fffffu, 0x807fffffu,
++      0x00800000u, 0x80800000u, 0x1a000000u, 0x9a000000u,
++      0x20000000u, 0xa0000000u, 0x3f7fffffu, 0xbf7fffffu,
++      0x3f800000u, 0xbf800000u, 0x3f800001u, 0xbf800001u,
++      0x5f7fffffu, 0xdf7fffffu, 0x7f7fffffu, 0xff7fffffu,
++      0x7f800000u, 0xff800000u,
++      0x7fc00000u, 0xffc00000u, 0x7fc12345u, 0x7f800001u,
++   };
++   const unsigned rounding_modes[] = {
++      FLOAT_CONTROLS_ROUNDING_MODE_RTE_FP32,
++      FLOAT_CONTROLS_ROUNDING_MODE_RTZ_FP32,
++   };
++   const unsigned denorm_modes[] = {
++      FLOAT_CONTROLS_DENORM_PRESERVE_FP32,
++      FLOAT_CONTROLS_DENORM_FLUSH_TO_ZERO_FP32,
++   };
++
++   for (unsigned rounding : rounding_modes) {
++      for (unsigned denorm : denorm_modes) {
++         const unsigned mode = rounding | denorm;
++         for (uint32_t bits : inputs) {
++            SCOPED_TRACE(::testing::Message() << "input bits=" << bits
++                                             << " mode=" << mode);
++            nir_const_value a = {}, zero = {}, compared = {}, product = {};
++            nir_const_value guarded = {};
++            a.u32 = bits;
++            nir_component_mask_t poison = 0;
++
++            nir_const_value *compare_sources[] = {&a, &zero};
++            nir_eval_const_opcode(nir_op_feq, &compared, &poison, 1, 32,
++                                  compare_sources, mode);
++            ASSERT_EQ(poison, 0);
++
++            nir_const_value *multiply_sources[] = {&a, &a};
++            nir_eval_const_opcode(nir_op_fmul, &product, &poison, 1, 32,
++                                  multiply_sources, mode);
++            ASSERT_EQ(poison, 0);
++
++            nir_const_value *select_sources[] = {&compared, &zero, &product};
++            nir_eval_const_opcode(nir_op_bcsel, &guarded, &poison, 1, 32,
++                                  select_sources, mode);
++            ASSERT_EQ(poison, 0);
++            EXPECT_EQ(guarded.u32, product.u32);
++         }
++      }
++   }
++}
++
++} /* namespace */
