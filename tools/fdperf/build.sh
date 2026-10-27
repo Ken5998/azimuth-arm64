@@ -40,7 +40,8 @@ rm -rf "$work/fdperf-pkg"
 mkdir -p "$pkg"
 strip -o "$pkg/fdperf" "$src/build/src/freedreno/perfcntrs/fdperf"
 # ArmadaOS has ncurses but not libconfig: ship it beside the binary.
-cp -L "$(ldconfig -p | awk '/libconfig\.so\.[0-9]+ .*aarch64/ {print $NF; exit}')" "$pkg/"
+libconfig="$(ldd "$pkg/fdperf" | awk '/libconfig\.so/ {print $3; exit}')"
+cp -L "$libconfig" "$pkg/"
 cp "$here/capture.sh" "$pkg/"
 tar -czf "$out/fdperf-aarch64.tar.gz" -C "$work/fdperf-pkg" fdperf
 sha256sum "$out/fdperf-aarch64.tar.gz"
