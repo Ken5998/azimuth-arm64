@@ -39,7 +39,7 @@ jobs:
           echo "MESA_COMMIT=$commit" >> "$GITHUB_ENV"
           echo "Mesa $REF: $commit" >> "$GITHUB_STEP_SUMMARY"
       - name: Prepare the source
-        run: scripts/prepare.sh work
+        run: scripts/prepare.sh work 2>&1 | tee prepare.log
       - name: Build
         run: scripts/build.sh work out
       - name: Check the driver
@@ -47,6 +47,8 @@ jobs:
           tar -tzf out/azimuth-turnip-next-*.tar.gz
           strings work/pkg/azimuth-next/libvulkan_freedreno.so | grep -q VK_EXT_external_memory_host
           cat work/pkg/azimuth-next/meta.json
+          echo "Mesa $(cat work/mesa/VERSION)"
+          grep -E '^(Mesa|Armada|Patch):' prepare.log
       - uses: actions/upload-artifact@v4
         with:
           name: azimuth-turnip-next
