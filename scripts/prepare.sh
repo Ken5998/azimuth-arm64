@@ -3,18 +3,29 @@
 # patches for its Turnip "Devel" driver, then this repository's patches.
 #
 # Usage: scripts/prepare.sh WORKDIR   (the source ends up in WORKDIR/mesa)
+#
+# MESA_COMMIT=<sha> builds another Mesa commit instead of the pinned one (for
+# test builds on newer Mesa); Armada base patches that no longer apply there
+# are then skipped with a warning, since upstream may have taken them over.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mkdir -p "$1" && cd "$1" && pwd)"
 pin() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval("d" + sys.argv[2]))' "$root/upstream.json" "$1"; }
 
-url="$(pin '["mesa"]["url"]')"
-sha256="$(pin '["mesa"]["sha256"]')"
 archive="$work/mesa.tar.gz"
-if ! echo "$sha256  $archive" | sha256sum --check --status 2>/dev/null; then
-  curl --fail --location --retry 3 -o "$archive" "$url"
-  echo "$sha256  $archive" | sha256sum --check --strict
+if [ -n "${MESA_COMMIT:-}" ]; then
+  echo "Mesa: test build on $MESA_COMMIT"
+  curl --fail --location --retry 3 -o "$archive" \
+    "https://gitlab.freedesktop.org/mesa/mesa/-/archive/$MESA_COMMIT/mesa-$MESA_COMMIT.tar.gz"
+  sha256sum "$archive"
+else
+  url="$(pin '["mesa"]["url"]')"
+  sha256="$(pin '["mesa"]["sha256"]')"
+  if ! echo "$sha256  $archive" | sha256sum --check --status 2>/dev/null; then
+    curl --fail --location --retry 3 -o "$archive" "$url"
+    echo "$sha256  $archive" | sha256sum --check --strict
+  fi
 fi
 
 rm -rf "$work/mesa"
@@ -29,11 +40,20 @@ while read -r path; do
   out="$work/armada-patches/${path##*/}"
   curl --fail --location --retry 3 -o "$out" \
     "${armada/github.com/raw.githubusercontent.com}/$armada_commit/$path"
+  if [ -n "${MESA_COMMIT:-}" ] &&
+     ! patch -d "$work/mesa" -p1 --forward --batch --quiet --dry-run < "$out" >/dev/null; then
+    echo "Armada: ${path##*/} does not apply on $MESA_COMMIT, skipped"
+    rm "$out"
+    continue
+  fi
   echo "Armada: ${path##*/}"
   patch -d "$work/mesa" -p1 --forward --batch --quiet < "$out"
 done
 
 for p in "$root"/patches/*.patch; do
   echo "Patch: ${p##*/}"
-  patch -d "$work/mesa" -p1 --forward --batch --quiet < "$p"
+  if ! patch -d "$work/mesa" -p1 --forward --batch < "$p"; then
+    find "$work/mesa" -name '*.rej' -exec sh -c 'echo "== $1"; cat "$1"' _ {} \;
+    exit 1
+  fi
 done

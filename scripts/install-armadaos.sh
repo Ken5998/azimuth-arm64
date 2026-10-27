@@ -2,36 +2,49 @@
 # Installs the Azimuth Turnip driver on ArmadaOS: the latest release (or the
 # version given) into ~/.local/share/armada/turnip/azimuth, with the Vulkan
 # manifest that points Azimuth at it, then prints the Steam launch options.
+# --file installs a package downloaded from a CI run instead (the .zip from
+# the run's page or the .tar.gz in it); a Mesa main test build lands in
+# ~/.local/share/armada/turnip/azimuth-next, next to the release driver.
 #
-# Usage: install-armadaos.sh [VERSION] [--test]
+# Usage: install-armadaos.sh [VERSION] [--test] [--file PACKAGE]
 set -euo pipefail
 
 repo=Ken5998/azimuth-arm64
-version="" test=0
-for arg in "$@"; do
-  case "$arg" in
+version="" test=0 file=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --test) test=1 ;;
-    *) version="${arg#v}" ;;
+    --file) file="$(realpath "$2")"; shift ;;
+    *) version="${1#v}" ;;
   esac
+  shift
 done
-if [ -z "$version" ]; then
+if [ -z "$version" ] && [ -z "$file" ]; then
   version="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
 fi
 
 turnip="$HOME/.local/share/armada/turnip"
-dest="$turnip/azimuth"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-echo "Downloading azimuth-turnip $version"
-curl -fL --retry 3 -o "$tmp/driver.tar.gz" \
-  "https://github.com/$repo/releases/download/v$version/azimuth-turnip-$version.tar.gz"
+if [ -n "$file" ]; then
+  case "$file" in
+    *.zip) python3 -m zipfile -e "$file" "$tmp/zip"; cp "$tmp"/zip/*.tar.gz "$tmp/driver.tar.gz" ;;
+    *) cp "$file" "$tmp/driver.tar.gz" ;;
+  esac
+else
+  echo "Downloading azimuth-turnip $version"
+  curl -fL --retry 3 -o "$tmp/driver.tar.gz" \
+    "https://github.com/$repo/releases/download/v$version/azimuth-turnip-$version.tar.gz"
+fi
 tar -xzf "$tmp/driver.tar.gz" -C "$tmp"
+folder="$(basename "$(dirname "$(ls "$tmp"/azimuth*/libvulkan_freedreno.so)")")"
+dest="$turnip/$folder"
 
 mkdir -p "$dest"
-install -m 0755 "$tmp/azimuth/libvulkan_freedreno.so" "$dest/libvulkan_freedreno.so"
-install -m 0644 "$tmp/azimuth/meta.json" "$dest/meta.json"
+install -m 0755 "$tmp/$folder/libvulkan_freedreno.so" "$dest/libvulkan_freedreno.so"
+install -m 0644 "$tmp/$folder/meta.json" "$dest/meta.json"
 install -m 0755 "$tmp/azimuth-hosttest" "$dest/azimuth-hosttest"
 cat > "$dest/icd.json" <<JSON
 {
@@ -42,7 +55,7 @@ cat > "$dest/icd.json" <<JSON
   }
 }
 JSON
-echo "Installed in $dest"
+echo "Installed $(cat "$dest/meta.json") in $dest"
 
 if [ "$test" = 1 ]; then
   echo "Testing host memory import:"

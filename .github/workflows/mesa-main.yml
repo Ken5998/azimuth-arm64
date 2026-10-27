@@ -1,0 +1,53 @@
+name: Turnip on Mesa main
+
+# Test build of the Azimuth Turnip on a newer Mesa (main by default), packaged
+# as azimuth-next/ so it can be compared with the release driver on the device.
+
+on:
+  push:
+    branches: [feat/turnip-mesa-main]
+  workflow_dispatch:
+    inputs:
+      mesa_ref:
+        description: Mesa branch or commit
+        default: main
+
+jobs:
+  turnip:
+    runs-on: ubuntu-24.04-arm
+    container: registry.fedoraproject.org/fedora:44
+    timeout-minutes: 60
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf -y install git gcc gcc-c++ meson ninja-build pkgconf-pkg-config patch curl tar gzip \
+            python3 python3-mako python3-pyyaml python3-packaging python3-ply bison flex glslang \
+            libdrm-devel expat-devel zlib-devel libzstd-devel \
+            wayland-devel wayland-protocols-devel libX11-devel libxcb-devel \
+            libxshmfence-devel libXrandr-devel
+      - uses: actions/checkout@v5
+      - name: Resolve the Mesa commit
+        env:
+          REF: ${{ inputs.mesa_ref || 'main' }}
+        run: |
+          if [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+            commit="$REF"
+          else
+            commit="$(git ls-remote https://gitlab.freedesktop.org/mesa/mesa.git "refs/heads/$REF" | cut -f1)"
+          fi
+          test -n "$commit"
+          echo "MESA_COMMIT=$commit" >> "$GITHUB_ENV"
+          echo "Mesa $REF: $commit" >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare the source
+        run: scripts/prepare.sh work
+      - name: Build
+        run: scripts/build.sh work out
+      - name: Check the driver
+        run: |
+          tar -tzf out/azimuth-turnip-next-*.tar.gz
+          strings work/pkg/azimuth-next/libvulkan_freedreno.so | grep -q VK_EXT_external_memory_host
+          cat work/pkg/azimuth-next/meta.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: azimuth-turnip-next
+          path: out/*.tar.gz
