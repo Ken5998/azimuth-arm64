@@ -2,6 +2,8 @@
 
 [Azimuth](https://almost-there-games.itch.io/azimuth), the Forza Horizon 2 PC
 wrapper, on ARM64 Linux handhelds such as the Retroid Pocket 6 with ArmadaOS.
+Since 1.0 Azimuth also runs Forza Motorsport 5, Forza Motorsport 6 and Forza
+Horizon 3; this repository was tested with Forza Horizon 2 only.
 
 Azimuth runs the game's Xbox One executable and translates its graphics to
 Direct3D 12, which Proton turns into Vulkan with vkd3d-proton. On the Retroid
@@ -14,6 +16,9 @@ Pocket 6 two things in the Vulkan driver, Turnip, stop it:
   cannot open heaps over existing memory*.
 - Some of the game's shaders crash Turnip's compiler while Azimuth builds its
   pipelines (`Unhandled ALU op: fmadz`), and the game closes.
+
+Both still hold with Azimuth 1.0.2: it still requires heaps over existing
+memory, and the shaders are still the game's own.
 
 This repository is an overlay: two Mesa patches, scripts and CI that build
 ArmadaOS's Turnip "Devel" driver with them. It never contains the game,
@@ -43,8 +48,9 @@ as Azimuth's own guide describes.
 
    The driver also shows up in Armada Control's Turnip list, but for Azimuth
    that choice doesn't reach the game, so set it in the launch options.
-3. In Azimuth's launcher set **Frame pacing** to **Real-time**. The game's
-   logic advances one step per frame; with *Fixed* it plays in slow motion
+3. Azimuth 1.0 and later always run the game at real time. On 0.9.x set
+   **Frame pacing** to **Real-time** in the launcher: the game's logic
+   advances one step per frame, and with *Fixed* it plays in slow motion
    whenever it runs below its frame rate.
 
 The first start builds Azimuth's pipelines and takes a while.
@@ -58,6 +64,12 @@ shaders, so resolution, presets and driver switches (`TU_DEBUG=sysmem`,
 `gmem`, `noubwc`, `IR3_SHADER_DEBUG=nopreamble`) change little. With
 Real-time frame pacing the game runs at the right speed. Locking the frame
 rate at 20 in the quick access menu makes it steadier.
+
+Azimuth 1.0 adds per-game graphics settings, among them Shadow detail, Shadow
+distance, Shadow redraw and Scenery detail. Shadows were the largest single
+cost in the GPU trace (depth-only draws, about a sixth of the frame), so they
+are the first settings to lower. Azimuth 1.0.2 also does much less of its own
+work per frame, which helps with stutter but not with the GPU limit.
 
 ## What is here
 
