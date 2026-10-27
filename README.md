@@ -38,22 +38,33 @@ as Azimuth's own guide describes.
    It installs the driver in `~/.local/share/armada/turnip/azimuth` and prints
    the launch options. Add `-s -- --test` after `bash` to also check that the
    driver imports host memory on your device.
-2. In Steam, Azimuth > Properties:
+2. Azimuth 1.0 compiles its launcher's shaders with `D3DCompiler_47`, and
+   Proton's own version can't compile them (*E5017: not yet implemented
+   feature*), so Azimuth closes at once. Install Microsoft's in Azimuth's
+   prefix, with the App ID that `protontricks -l` shows for the shortcut:
+
+   ```sh
+   protontricks <APPID> d3dcompiler_47
+   ```
+3. In Steam, Azimuth > Properties:
    - Compatibility: **Proton Experimental (arm64)**.
    - Launch options, with your home folder:
 
      ```
-     VK_DRIVER_FILES=/var/home/armada/.local/share/armada/turnip/azimuth/icd.json VK_ICD_FILENAMES=/var/home/armada/.local/share/armada/turnip/azimuth/icd.json %command%
+     WINEDLLOVERRIDES="d3dcompiler_47=n;vcruntime140,vcruntime140_1,msvcp140,concrt140,msvcp110,msvcr110=n" VK_DRIVER_FILES=/var/home/armada/.local/share/armada/turnip/azimuth/icd.json VK_ICD_FILENAMES=/var/home/armada/.local/share/armada/turnip/azimuth/icd.json %command%
      ```
 
-   The driver also shows up in Armada Control's Turnip list, but for Azimuth
-   that choice doesn't reach the game, so set it in the launch options.
-3. Azimuth 1.0 and later always run the game at real time. On 0.9.x set
+   The overrides make Proton load Microsoft's compiler and the Visual C++
+   runtimes Azimuth ships in `data/bin`. The driver also shows up in Armada
+   Control's Turnip list, but for Azimuth that choice doesn't reach the game,
+   so set it in the launch options.
+4. Azimuth 1.0 and later always run the game at real time. On 0.9.x set
    **Frame pacing** to **Real-time** in the launcher: the game's logic
    advances one step per frame, and with *Fixed* it plays in slow motion
    whenever it runs below its frame rate.
 
-The first start builds Azimuth's pipelines and takes a while.
+The first start builds Azimuth's pipelines and takes a while. Azimuth
+writes its log and crash dumps in `data/logs` beside `azimuth.exe`.
 
 ## Performance
 
