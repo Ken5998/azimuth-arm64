@@ -1,0 +1,37 @@
+name: fdperf
+
+# Builds Mesa's fdperf with the CSV log mode, to read the Adreno's hardware
+# counters on the device while a game runs.
+
+on:
+  push:
+    paths:
+      - tools/fdperf/**
+      - .github/workflows/fdperf.yml
+  workflow_dispatch:
+
+jobs:
+  fdperf:
+    runs-on: ubuntu-24.04-arm
+    container: registry.fedoraproject.org/fedora:44
+    timeout-minutes: 30
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf -y install gcc gcc-c++ meson ninja-build pkgconf-pkg-config patch curl tar xz gzip \
+            python3 python3-mako python3-pyyaml python3-packaging bison flex \
+            libdrm-devel expat-devel zlib-devel libzstd-devel ncurses-devel libconfig-devel \
+            binutils glibc-common
+      - uses: actions/checkout@v5
+      - name: Check the scripts
+        run: bash -n tools/fdperf/*.sh
+      - name: Build
+        run: tools/fdperf/build.sh work out
+      - name: Check the package
+        run: |
+          tar -tzf out/fdperf-aarch64.tar.gz
+          work/fdperf-pkg/fdperf/fdperf -h 2>&1 | grep -q -- '-l <N>'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fdperf-aarch64
+          path: out/fdperf-aarch64.tar.gz

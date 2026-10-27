@@ -1,0 +1,179 @@
+--- a/src/freedreno/perfcntrs/fdperf.c
++++ b/src/freedreno/perfcntrs/fdperf.c
+@@ -38,9 +38,13 @@
+ static struct {
+    int refresh_ms;
+    bool dump;
++   bool log;
++   int log_seconds;
+ } options = {
+    .refresh_ms = REFRESH_MS,
+    .dump = false,
++   .log = false,
++   .log_seconds = 0,
+ };
+ 
+ /* NOTE first counter group should always be CP, since we unconditionally
+@@ -60,6 +64,7 @@
+       uint16_t select_val;
+       bool is_gpufreq_counter;
+       bool is_invalid; /* If the selector got overwritten by another value. */
++      bool logged;     /* Picked with FDPERF_SELECT, written by -l. */
+    } counter[MAX_CNTR_PER_GROUP];
+ 
+    /* name of currently selected counters (for UI): */
+@@ -1169,6 +1174,7 @@
+            "\n"
+            "  -r <N>     refresh every N milliseconds\n"
+            "  -d         dump counters and exit\n"
++           "  -l <N>     log FDPERF_SELECT counters as CSV for N seconds (0: forever)\n"
+            "  -h         show this message\n",
+            argv0);
+    exit(2);
+@@ -1179,7 +1185,7 @@
+ {
+    int c;
+ 
+-   while ((c = getopt(argc, argv, "r:d")) != -1) {
++   while ((c = getopt(argc, argv, "r:dl:")) != -1) {
+       switch (c) {
+       case 'r':
+          options.refresh_ms = atoi(optarg);
+@@ -1187,6 +1193,10 @@
+       case 'd':
+          options.dump = true;
+          break;
++      case 'l':
++         options.log = true;
++         options.log_seconds = atoi(optarg);
++         break;
+       default:
+          print_usage(argv[0]);
+          break;
+@@ -1195,6 +1205,112 @@
+ }
+ 
+ /*
++ * Log mode: FDPERF_SELECT names the countables (comma separated, matched by
++ * the end of their name, e.g. PERF_SP_BUSY_CYCLES), -l writes their rates as
++ * CSV to stdout every refresh period for N seconds (0 = until killed).
++ */
++
++static bool
++ends_with(const char *s, const char *suffix)
++{
++   size_t ls = strlen(s), lx = strlen(suffix);
++   return lx <= ls && !strcmp(s + ls - lx, suffix);
++}
++
++static void
++select_by_name(void)
++{
++   const char *env = getenv("FDPERF_SELECT");
++   if (!env)
++      return;
++
++   /* Slot 0 of the first group (CP) measures the GPU clock. */
++   unsigned next[dev.ngroups];
++   for (unsigned i = 0; i < dev.ngroups; i++)
++      next[i] = (i == 0) ? 1 : 0;
++
++   char *list = strdup(env);
++   for (char *name = strtok(list, ","); name; name = strtok(NULL, ",")) {
++      bool found = false;
++      for (unsigned i = 0; i < dev.ngroups && !found; i++) {
++         struct counter_group *group = &dev.groups[i];
++         for (unsigned k = 0; k < group->group->num_countables; k++) {
++            if (!ends_with(group->group->countables[k].name, name))
++               continue;
++            if (next[i] >= group->num_counters) {
++               fprintf(stderr, "no free %s counter for %s\n", group->group->name, name);
++            } else {
++               select_counter(group, next[i], group->group->countables[k].selector);
++               group->counter[next[i]].logged = true;
++               next[i]++;
++            }
++            found = true;
++            break;
++         }
++      }
++      if (!found)
++         fprintf(stderr, "unknown countable %s\n", name);
++   }
++   free(list);
++}
++
++static void
++log_counters(void)
++{
++   printf("t_ms,gpu_mhz");
++   for (unsigned i = 0; i < dev.ngroups; i++) {
++      const struct counter_group *group = &dev.groups[i];
++      for (unsigned j = 0; j < group->num_counters; j++)
++         if (group->counter[j].logged)
++            printf(",%s.%s", group->group->name, group->label[j]);
++   }
++   printf("\n");
++   fflush(stdout);
++
++   uint64_t start = gettime_us(), last_restore = start;
++   resample();
++   while (!options.log_seconds ||
++          delta(start, gettime_us()) < (uint64_t)options.log_seconds * 1000000) {
++      sleep_us(options.refresh_ms * 1000);
++      resample();
++
++      if (dev.io) {
++         /* as in the UI: the GPU may have suspended and lost the selects */
++         uint64_t t = gettime_us();
++         if (delta(last_restore, t) > 500000) {
++            restore_counter_groups();
++            flush_ring();
++            last_restore = t;
++         }
++      } else if (dev.discontinuity) {
++         continue;
++      }
++
++      const struct counter_group *cp = &dev.groups[0];
++      double mhz = cp->sample_time_delta[0] ?
++         (double)cp->value_delta[0] / cp->sample_time_delta[0] : 0;
++      printf("%" PRIu64 ",%.0f", delta(start, gettime_us()) / 1000, mhz);
++
++      for (unsigned i = 0; i < dev.ngroups; i++) {
++         const struct counter_group *group = &dev.groups[i];
++         for (unsigned j = 0; j < group->num_counters; j++) {
++            if (!group->counter[j].logged)
++               continue;
++            if (group->counter[j].is_invalid || !group->sample_time_delta[j]) {
++               printf(",");
++               continue;
++            }
++            /* per second */
++            printf(",%.0f", (double)group->value_delta[j] * 1000000.0 /
++                            group->sample_time_delta[j]);
++         }
++      }
++      printf("\n");
++      fflush(stdout);
++   }
++}
++
++/*
+  * main
+  */
+ 
+@@ -1209,10 +1325,13 @@
+ 
+    restore_counter_groups();
+    config_restore();
++   select_by_name();
+    flush_ring();
+ 
+    if (options.dump)
+       dump_counters();
++   else if (options.log)
++      log_counters();
+    else
+       main_ui();
+ 
