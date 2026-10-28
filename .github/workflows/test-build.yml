@@ -2,9 +2,12 @@ name: Turnip test build
 
 # Test builds of the Azimuth Turnip (another Mesa commit, Armada base patches
 # left out), packaged as azimuth-VARIANT/ so they can be compared with the
-# release driver on the device.
+# release driver on the device. Manual runs take the inputs below; a push to a
+# feat/turnip-* branch takes them from test-build.env, if the branch has one.
 
 on:
+  push:
+    branches: ['feat/turnip-*']
   workflow_dispatch:
     inputs:
       mesa_ref:
@@ -38,6 +41,11 @@ jobs:
           VARIANT: ${{ inputs.variant }}
         shell: bash
         run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            [ -f test-build.env ] || { echo "no test-build.env"; exit 1; }
+            source test-build.env
+            REF="$MESA_REF" SKIP="$SKIP_ARMADA"
+          fi
           echo "SKIP_ARMADA=$SKIP" >> "$GITHUB_ENV"
           echo "VARIANT=$VARIANT" >> "$GITHUB_ENV"
           if [ "$REF" = pinned ]; then
@@ -64,5 +72,5 @@ jobs:
           grep -E '^(Mesa|Armada|Patch):' prepare.log || true
       - uses: actions/upload-artifact@v4
         with:
-          name: azimuth-turnip-${{ inputs.variant }}
+          name: azimuth-turnip-${{ env.VARIANT }}
           path: out/*.tar.gz
