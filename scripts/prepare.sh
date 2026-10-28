@@ -7,6 +7,7 @@
 # MESA_COMMIT=<sha> builds another Mesa commit instead of the pinned one (for
 # test builds on newer Mesa); Armada base patches that no longer apply there
 # are then skipped with a warning, since upstream may have taken them over.
+# SKIP_ARMADA="<patch file names>" leaves those Armada base patches out.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,6 +39,10 @@ mkdir -p "$work/armada-patches"
 python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["armada"]["patches"]))' "$root/upstream.json" |
 while read -r path; do
   out="$work/armada-patches/${path##*/}"
+  if [[ " ${SKIP_ARMADA:-} " == *" ${path##*/} "* ]]; then
+    echo "Armada: ${path##*/} left out"
+    continue
+  fi
   curl --fail --location --retry 3 -o "$out" \
     "${armada/github.com/raw.githubusercontent.com}/$armada_commit/$path"
   if [ -n "${MESA_COMMIT:-}" ] &&

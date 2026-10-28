@@ -1,16 +1,21 @@
-name: Turnip on Mesa main
+name: Turnip test build
 
-# Test build of the Azimuth Turnip on a newer Mesa (main by default), packaged
-# as azimuth-next/ so it can be compared with the release driver on the device.
+# Test builds of the Azimuth Turnip (another Mesa commit, Armada base patches
+# left out), packaged as azimuth-VARIANT/ so they can be compared with the
+# release driver on the device.
 
 on:
-  push:
-    branches: [feat/turnip-mesa-next]
   workflow_dispatch:
     inputs:
       mesa_ref:
-        description: Mesa branch or commit
+        description: Mesa branch or commit, or "pinned" for the one in upstream.json
         default: main
+      skip_armada:
+        description: Armada base patches to leave out (file names, space-separated)
+        default: ""
+      variant:
+        description: Package name, installed as azimuth-VARIANT
+        default: next
 
 jobs:
   turnip:
@@ -28,9 +33,16 @@ jobs:
       - uses: actions/checkout@v5
       - name: Resolve the Mesa commit
         env:
-          REF: ${{ inputs.mesa_ref || 'main' }}
+          REF: ${{ inputs.mesa_ref }}
+          SKIP: ${{ inputs.skip_armada }}
+          VARIANT: ${{ inputs.variant }}
+        shell: bash
         run: |
-          if [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "SKIP_ARMADA=$SKIP" >> "$GITHUB_ENV"
+          echo "VARIANT=$VARIANT" >> "$GITHUB_ENV"
+          if [ "$REF" = pinned ]; then
+            exit 0
+          elif [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
             commit="$REF"
           else
             commit="$(git ls-remote https://gitlab.freedesktop.org/mesa/mesa.git "refs/heads/$REF" | cut -f1)"
@@ -45,12 +57,12 @@ jobs:
         run: scripts/build.sh work out
       - name: Check the driver
         run: |
-          tar -tzf out/azimuth-turnip-next-*.tar.gz
-          strings work/pkg/azimuth-next/libvulkan_freedreno.so | grep -q VK_EXT_external_memory_host
-          cat work/pkg/azimuth-next/meta.json
+          tar -tzf out/azimuth-turnip-$VARIANT-*.tar.gz
+          strings work/pkg/azimuth-$VARIANT/libvulkan_freedreno.so | grep -q VK_EXT_external_memory_host
+          cat work/pkg/azimuth-$VARIANT/meta.json
           echo "Mesa $(cat work/mesa/VERSION)"
-          grep -E '^(Mesa|Armada|Patch):' prepare.log
+          grep -E '^(Mesa|Armada|Patch):' prepare.log || true
       - uses: actions/upload-artifact@v4
         with:
-          name: azimuth-turnip-next
+          name: azimuth-turnip-${{ inputs.variant }}
           path: out/*.tar.gz

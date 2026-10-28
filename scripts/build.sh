@@ -8,6 +8,7 @@
 # With MESA_COMMIT set (see prepare.sh) the driver is a test build: it goes in
 # the folder azimuth-next/ of azimuth-turnip-next-VERSION.tar.gz with its own
 # label, so it can sit next to the release driver for an A/B comparison.
+# VARIANT=<name> does the same for any test build, as azimuth-<name>/.
 set -euo pipefail
 shopt -s nullglob
 
@@ -28,7 +29,7 @@ meson_args=(--buildtype release --prefix /usr
 # the same release keeps users' caches and any change invalidates them.
 build_id="$({
   echo "azimuth-arm64" "$march" "${meson_args[*]}"
-  echo "${MESA_COMMIT:-}"
+  echo "${MESA_COMMIT:-}" "${SKIP_ARMADA:-}"
   cat "$root/upstream.json" "$work"/armada-patches/*.patch "$root"/patches/*.patch
 } | sha256sum | cut -c1-40)"
 
@@ -37,10 +38,12 @@ CFLAGS="-O2 $march" CXXFLAGS="-O2 $march" \
   meson setup "$src/build" "$src" "${meson_args[@]}" -Dtu-build-id="$build_id"
 ninja -C "$src/build" src/freedreno/vulkan/libvulkan_freedreno.so
 
-if [ -n "${MESA_COMMIT:-}" ]; then
-  folder=azimuth-next
-  label="Azimuth (Mesa main ${MESA_COMMIT:0:10} + host memory) $version"
-  tarball="azimuth-turnip-next-$version.tar.gz"
+variant="${VARIANT:-}"
+[ -n "${MESA_COMMIT:-}" ] && variant="${variant:-next}"
+if [ -n "$variant" ]; then
+  folder="azimuth-$variant"
+  label="Azimuth ($variant: Mesa ${MESA_COMMIT:-pinned}${SKIP_ARMADA:+, without $SKIP_ARMADA}) $version"
+  tarball="azimuth-turnip-$variant-$version.tar.gz"
 else
   folder=azimuth
   label="Azimuth (Devel + host memory) $version"
