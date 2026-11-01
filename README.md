@@ -17,7 +17,7 @@ Pocket 6 two things in the Vulkan driver, Turnip, stop it:
 - Some of the game's shaders crash Turnip's compiler while Azimuth builds its
   pipelines (`Unhandled ALU op: fmadz`), and the game closes.
 
-Both still hold with Azimuth 1.0.2: it still requires heaps over existing
+Both still hold with Azimuth 1.0.4: it still requires heaps over existing
 memory, and the shaders are still the game's own.
 
 This repository is an overlay: two Mesa patches, scripts and CI that build
@@ -38,24 +38,27 @@ as Azimuth's own guide describes.
    It installs the driver in `~/.local/share/armada/turnip/azimuth` and prints
    the launch options. Add `-s -- --test` after `bash` to also check that the
    driver imports host memory on your device.
-2. Azimuth 1.0 compiles its launcher's shaders with `D3DCompiler_47`, and
-   Proton's own version can't compile them (*E5017: not yet implemented
-   feature*), so Azimuth closes at once. Install Microsoft's in Azimuth's
-   prefix, with the App ID that `protontricks -l` shows for the shortcut:
+2. Only for Azimuth 1.0.0 to 1.0.2: they compile the launcher's shaders with
+   `D3DCompiler_47`, and Proton's own version can't compile them (*E5017: not
+   yet implemented feature*), so Azimuth closes at once. Install Microsoft's
+   in Azimuth's prefix, with the App ID that `protontricks -l` shows for the
+   shortcut, and add `d3dcompiler_47=n;` at the start of the overrides below:
 
    ```sh
    protontricks <APPID> d3dcompiler_47
    ```
+
+   Azimuth 1.0.4 ships its shaders compiled and no longer needs it.
 3. In Steam, Azimuth > Properties:
    - Compatibility: **Proton Experimental (arm64)**.
    - Launch options, with your home folder:
 
      ```
-     WINEDLLOVERRIDES="d3dcompiler_47=n;vcruntime140,vcruntime140_1,msvcp140,concrt140,msvcp110,msvcr110=n" VK_DRIVER_FILES=/var/home/armada/.local/share/armada/turnip/azimuth/icd.json VK_ICD_FILENAMES=/var/home/armada/.local/share/armada/turnip/azimuth/icd.json %command%
+     WINEDLLOVERRIDES="vcruntime140,vcruntime140_1,msvcp140,concrt140,msvcp110,msvcr110=n" VK_DRIVER_FILES=/var/home/armada/.local/share/armada/turnip/azimuth/icd.json VK_ICD_FILENAMES=/var/home/armada/.local/share/armada/turnip/azimuth/icd.json %command%
      ```
 
-   The overrides make Proton load Microsoft's compiler and the Visual C++
-   runtimes Azimuth ships in `data/bin`. The driver also shows up in Armada
+   The overrides make Proton load the Visual C++ runtimes Azimuth ships in
+   `data/bin`. The driver also shows up in Armada
    Control's Turnip list, but for Azimuth that choice doesn't reach the game,
    so set it in the launch options.
 4. Azimuth 1.0 and later always run the game at real time. On 0.9.x set

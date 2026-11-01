@@ -51,14 +51,13 @@ fi
 
 cat <<TEXT
 
-Azimuth 1.0 needs Microsoft's D3DCompiler_47 in its prefix
-(the App ID is the one protontricks -l shows for the shortcut):
-  protontricks <APPID> d3dcompiler_47
-
 In Steam, Azimuth > Properties:
   Compatibility: Proton Experimental (arm64)
   Launch options:
-    WINEDLLOVERRIDES="d3dcompiler_47=n;vcruntime140,vcruntime140_1,msvcp140,concrt140,msvcp110,msvcr110=n" VK_DRIVER_FILES=$dest/icd.json VK_ICD_FILENAMES=$dest/icd.json %command%
+    WINEDLLOVERRIDES="vcruntime140,vcruntime140_1,msvcp140,concrt140,msvcp110,msvcr110=n" VK_DRIVER_FILES=$dest/icd.json VK_ICD_FILENAMES=$dest/icd.json %command%
 
+Azimuth 1.0.0 to 1.0.2 also need Microsoft's D3DCompiler_47 in the prefix
+(protontricks <APPID> d3dcompiler_47, App ID from protontricks -l) and
+d3dcompiler_47=n; at the start of the overrides; 1.0.4 doesn't.
 On Azimuth 0.9.x, set Frame pacing to Real-time in its launcher.
 TEXT
