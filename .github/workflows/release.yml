@@ -53,13 +53,18 @@ jobs:
           mesa="$(python3 -c 'import json; print(json.load(open("upstream.json"))["mesa"]["commit"][:10])')"
           scripts/release-notes.sh "v$version" > notes.md
           cat >> notes.md <<NOTES
-          ## Install
+          ## Using the driver
 
-          Turnip (Mesa $mesa, ArmadaOS's Devel driver) with the two fixes Azimuth needs on the Retroid Pocket 6: emulated VK_EXT_external_memory_host and the ir3 fmadz compile fix.
+          Turnip from ArmadaOS's Devel branch (Mesa $mesa) with the two fixes Forza Horizon 2 needs through Azimuth on the Adreno 740: emulated VK_EXT_external_memory_host and the ir3 fmadz compile fix.
 
-          On ArmadaOS, in Desktop Mode, run scripts/install-armadaos.sh: it installs the driver in ~/.local/share/armada/turnip/azimuth and prints the Steam launch options. Use Proton Experimental (arm64) and set Frame pacing to Real-time in Azimuth's launcher.
+          Have Azimuth set up with your own game files and added to Steam first. Then, in Desktop Mode:
 
-          No game files are included. SHA-256: \`$sha256\`
+          1. Run scripts/install-armadaos.sh (the README has a curl one-liner). It puts the driver in ~/.local/share/armada/turnip/azimuth and prints the launch options.
+          2. In Azimuth > Properties pick Proton Experimental (arm64) and paste those launch options. They point VK_DRIVER_FILES at this driver; choosing it in Armada Control doesn't reach the game.
+
+          Azimuth 1.0.4 runs as is; 1.0.0 to 1.0.2 also need Microsoft's d3dcompiler_47 in the prefix (see the README). The first start compiles Azimuth's pipelines, so give it a minute.
+
+          Driver SHA-256: \`$sha256\`. No game files here.
           NOTES
           if gh release view "v$version" > /dev/null 2>&1; then
             gh release upload "v$version" "$archive" --clobber
