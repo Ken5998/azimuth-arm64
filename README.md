@@ -85,6 +85,39 @@ cost in the GPU trace (depth-only draws, about a sixth of the frame), so they
 are the first settings to lower. Azimuth 1.0.2 also does much less of its own
 work per frame, which helps with stutter but not with the GPU limit.
 
+## Lighter graphics on the Retroid Pocket 6
+
+Forza Horizon 2 takes its render settings from small XML files in
+`media/RenderScenarios`, one base file and one per situation (race, replay,
+menus, split screen). `scripts/fh2-lowspec.py` copies them from your game
+folder, turns down the car, crowd, mirror and reflection settings and writes them as a
+mod for [Extra Options](https://github.com/RokkuDayo/ForzaHorizon2_ExtraOptions),
+which loads it in place of the originals. No game file is changed.
+
+1. Install Extra Options for Azimuth (its files go beside `azimuth.exe`) and add
+   `WINEDLLOVERRIDES="winmm.dll=n,b"` to the launch options, next to the
+   overrides above.
+2. Run, with your Azimuth folder and, if it isn't below it, the game folder:
+
+   ```sh
+   python3 fh2-lowspec.py ~/Games/PC/azimuth-fh2 [GAME_DIR]
+   ```
+
+   Extra Options adds `rp6-lowspec` to `mods/loadorder.txt` on the next start;
+   `FH2_ExtraOptions.log` then lists `rp6-lowspec: media addon ready`.
+
+What it lowers: car reflections are no longer re-rendered every frame (also
+on AI cars), no windshield reflections, 256 shadow maps without high-detail
+car shadows and without shadows from fences and the crowd, cars switch to
+simpler models at half the distance, no crowd, no motion blur, bloom at half
+rate, particles at a quarter, a lighter mirror.
+
+On the Retroid Pocket 6 this gives about 3 fps: the pause menu at the Horizon
+festival goes from 23 to 26 fps and the road from the festival to the bridge
+from 22-28 to 24-30. The rest of the frame is the world itself, which these
+files don't touch. To undo it, run the script with `--remove` or put
+`# rp6-lowspec` in `loadorder.txt`.
+
 ## What is here
 
 | Path | What it does |
@@ -95,6 +128,7 @@ work per frame, which helps with stutter but not with the GPU limit.
 | `scripts/prepare.sh` | Downloads Mesa and applies ArmadaOS's patches and these. |
 | `scripts/build.sh` | Builds Turnip with ArmadaOS's flags and packages it with its label and `azimuth-hosttest`. |
 | `scripts/install-armadaos.sh` | The install above. |
+| `scripts/fh2-lowspec.py` | Writes the lighter render settings as an Extra Options mod, from your own game files. |
 | `tools/hosttest.c` | Imports host memory, writes it from the GPU and frees it, to check the driver on a device. |
 
 CI builds on an aarch64 runner in Fedora 44, the base of ArmadaOS. Releases

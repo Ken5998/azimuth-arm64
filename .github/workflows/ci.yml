@@ -22,7 +22,9 @@ jobs:
             libxshmfence-devel libXrandr-devel
       - uses: actions/checkout@v5
       - name: Check the scripts
-        run: bash -n scripts/*.sh
+        run: |
+          bash -n scripts/*.sh
+          python3 -m py_compile scripts/*.py
       - name: Prepare the source
         run: scripts/prepare.sh work
       - name: Build
