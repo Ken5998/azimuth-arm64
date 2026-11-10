@@ -55,7 +55,7 @@ jobs:
           cat >> notes.md <<NOTES
           ## Using the driver
 
-          Turnip from ArmadaOS's Devel branch (Mesa $mesa) with the two fixes Forza Horizon 2 needs through Azimuth on the Adreno 740: emulated VK_EXT_external_memory_host and the ir3 fmadz compile fix.
+          Turnip from Mesa main (commit $mesa, 27.0-devel) with ArmadaOS's base patches and the two fixes Forza Horizon 2 needs through Azimuth on the Adreno 740: emulated VK_EXT_external_memory_host and the ir3 fmadz compile fix.
 
           Have Azimuth set up with your own game files and added to Steam first. Then, in Desktop Mode:
 

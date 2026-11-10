@@ -1,8 +1,8 @@
 {
   "mesa": {
-    "commit": "c126acd85a645728bcecaa164d7d7c928438e842",
-    "url": "https://gitlab.freedesktop.org/mesa/mesa/-/archive/c126acd85a645728bcecaa164d7d7c928438e842/mesa-c126acd85a645728bcecaa164d7d7c928438e842.tar.gz",
-    "sha256": "f890f9a20db8afb07b3ac3e17ce594a857dce73aa0bda62e80cdf1171cc109e6"
+    "commit": "50cbad92b90341baaa4517582c4f2cf6ddc347c6",
+    "url": "https://gitlab.freedesktop.org/mesa/mesa/-/archive/50cbad92b90341baaa4517582c4f2cf6ddc347c6/mesa-50cbad92b90341baaa4517582c4f2cf6ddc347c6.tar.gz",
+    "sha256": "49feda7cb52c9b9e6a2d7e1288feee0bd68764964d2144fbcd59afd2f78ff507"
   },
   "armada": {
     "repository": "https://github.com/armada-os/armada",

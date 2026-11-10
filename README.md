@@ -21,7 +21,8 @@ Both still hold with Azimuth 1.0.4: it still requires heaps over existing
 memory, and the shaders are still the game's own.
 
 This repository is an overlay: two Mesa patches, scripts and CI that build
-ArmadaOS's Turnip "Devel" driver with them. It never contains the game,
+Turnip from a Mesa main snapshot (27.0-devel) with them, plus
+ArmadaOS's base patches. It never contains the game,
 Azimuth or files from either.
 
 ## Install on the Retroid Pocket 6 (ArmadaOS)
@@ -89,7 +90,7 @@ work per frame, which helps with stutter but not with the GPU limit.
 
 | Path | What it does |
 | --- | --- |
-| `upstream.json` | The Mesa commit (ArmadaOS's Devel pin) and the ArmadaOS commit whose base patches are applied first. |
+| `upstream.json` | The Mesa main commit and the ArmadaOS commit whose base patches are applied first. |
 | `patches/0001-*` | Turnip: emulates `VK_EXT_external_memory_host` on `msm`. The host range is copied into a cached-coherent buffer object that is then mapped over the same address, so the game keeps its pointer and shares the pages with the GPU; on free the range gets ordinary memory back with the last contents. |
 | `patches/0002-*` | ir3: lowers the `fmulz`/`ffmaz`/`fmadz` left after the last algebraic pass, which the backend can't compile. |
 | `scripts/prepare.sh` | Downloads Mesa and applies ArmadaOS's patches and these. |

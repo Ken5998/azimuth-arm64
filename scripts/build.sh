@@ -35,7 +35,7 @@ pkg="$work/pkg/azimuth"
 rm -rf "$work/pkg"
 mkdir -p "$pkg"
 strip -o "$pkg/libvulkan_freedreno.so" "$src/build/src/freedreno/vulkan/libvulkan_freedreno.so"
-printf '{"name": "Azimuth (Devel + host memory) %s"}\n' "$version" > "$pkg/meta.json"
+printf '{"name": "Azimuth (Mesa main + host memory) %s"}\n' "$version" > "$pkg/meta.json"
 gcc -O2 -I"$src/include" -o "$work/pkg/azimuth-hosttest" "$root/tools/hosttest.c" -ldl
 
 tar -czf "$out/azimuth-turnip-$version.tar.gz" -C "$work/pkg" azimuth azimuth-hosttest
